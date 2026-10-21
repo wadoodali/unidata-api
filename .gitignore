@@ -1,0 +1,29 @@
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+venv/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local databases — never upload
+unidata.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Test caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and OS files
+.vscode/
+.DS_Store
+Thumbs.db
