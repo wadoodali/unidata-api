@@ -2,8 +2,9 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import crud, models, schemas
+from app import crud, schemas
 from app.database import Base, engine, get_db
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -29,6 +30,10 @@ def validate_patch(updates: dict):
             detail="Fields cannot be explicitly set to null.",
         )
 
+
+# -------------------------
+# Root
+# -------------------------
 
 @app.get("/")
 def root():
@@ -159,8 +164,13 @@ def update_lecturer(
     try:
         data = updates.model_dump(exclude_unset=True)
         validate_patch(data)
-        if "department_id" in data and crud.get_department(db, data["department_id"]) is None:
+
+        if (
+            "department_id" in data
+            and crud.get_department(db, data["department_id"]) is None
+        ):
             raise HTTPException(status_code=422, detail="Department not found.")
+
         lecturer = crud.update_lecturer(db, lecturer_id, data)
         if lecturer is None:
             raise HTTPException(status_code=404, detail="Lecturer not found.")
@@ -205,9 +215,10 @@ def create_course(
 def read_courses(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    after_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
-    return crud.get_courses(db, skip, limit)
+    return crud.get_courses(db, skip, limit, after_id)
 
 
 @app.get("/api/courses/{course_id}", response_model=schemas.CourseResponse)
@@ -227,10 +238,19 @@ def update_course(
     try:
         data = updates.model_dump(exclude_unset=True)
         validate_patch(data)
-        if "department_id" in data and crud.get_department(db, data["department_id"]) is None:
+
+        if (
+            "department_id" in data
+            and crud.get_department(db, data["department_id"]) is None
+        ):
             raise HTTPException(status_code=422, detail="Department not found.")
-        if "lecturer_id" in data and crud.get_lecturer(db, data["lecturer_id"]) is None:
+
+        if (
+            "lecturer_id" in data
+            and crud.get_lecturer(db, data["lecturer_id"]) is None
+        ):
             raise HTTPException(status_code=422, detail="Lecturer not found.")
+
         course = crud.update_course(db, course_id, data)
         if course is None:
             raise HTTPException(status_code=404, detail="Course not found.")
@@ -270,9 +290,10 @@ def create_exam(exam: schemas.ExamCreate, db: Session = Depends(get_db)):
 def read_exams(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    after_id: int | None = Query(default=None, ge=1),
     db: Session = Depends(get_db),
 ):
-    return crud.get_exams(db, skip, limit)
+    return crud.get_exams(db, skip, limit, after_id)
 
 
 @app.get("/api/exams/{exam_id}", response_model=schemas.ExamResponse)
@@ -292,8 +313,10 @@ def update_exam(
     try:
         data = updates.model_dump(exclude_unset=True)
         validate_patch(data)
+
         if "course_id" in data and crud.get_course(db, data["course_id"]) is None:
             raise HTTPException(status_code=422, detail="Course not found.")
+
         exam = crud.update_exam(db, exam_id, data)
         if exam is None:
             raise HTTPException(status_code=404, detail="Exam not found.")

@@ -118,13 +118,20 @@ def get_course(db: Session, course_id: int):
     return db.get(models.Course, course_id)
 
 
-def get_courses(db: Session, skip: int = 0, limit: int = 20):
-    statement = (
-        select(models.Course)
-        .order_by(models.Course.id)
-        .offset(skip)
-        .limit(limit)
-    )
+def get_courses(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    after_id: int | None = None,
+):
+    statement = select(models.Course).order_by(models.Course.id)
+
+    if after_id is not None:
+        statement = statement.where(models.Course.id > after_id)
+    else:
+        statement = statement.offset(skip)
+
+    statement = statement.limit(limit)
     return db.scalars(statement).all()
 
 
@@ -167,13 +174,20 @@ def get_exam(db: Session, exam_id: int):
     return db.get(models.Exam, exam_id)
 
 
-def get_exams(db: Session, skip: int = 0, limit: int = 20):
-    statement = (
-        select(models.Exam)
-        .order_by(models.Exam.id)
-        .offset(skip)
-        .limit(limit)
-    )
+def get_exams(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    after_id: int | None = None,
+):
+    statement = select(models.Exam).order_by(models.Exam.id)
+
+    if after_id is not None:
+        statement = statement.where(models.Exam.id > after_id)
+    else:
+        statement = statement.offset(skip)
+
+    statement = statement.limit(limit)
     return db.scalars(statement).all()
 
 
