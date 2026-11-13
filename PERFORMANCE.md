@@ -1,33 +1,40 @@
 # UniData API Performance Notes
 
-## What I tested
+See [README.md](README.md) for setup, application startup, test, and Locust commands.
 
-I built this API to store and read university data. The test database contains about 1.01 million records across departments, lecturers, courses, and exams.
+## Test setup
 
-I used Locust to send requests to the API. I tested both SQLite and PostgreSQL. I also compared two ways of moving through large result sets:
+The recorded tests used about 1.01 million records across departments, lecturers, courses, and exams.
 
-- offset pagination, which skips rows before returning the requested page;
-- keyset pagination, which uses `after_id` to continue from a known record.
+The API uses synchronous FastAPI handlers and synchronous SQLAlchemy sessions. PostgreSQL was configured with:
 
-The API uses synchronous FastAPI handlers and synchronous SQLAlchemy sessions.
-
-## Database and connection settings
-
-The PostgreSQL pool has:
-
-- 10 base connections;
+- 10 base pool connections;
 - up to 20 overflow connections;
 - 30 checked-out connections at most;
 - a 30-second pool timeout;
 - connection pre-ping enabled.
 
-The default AnyIO thread limiter is set to 30 tokens. This limits the number of synchronous request tasks that can run at the same time in one process.
+The AnyIO thread limiter is set to 30 tokens.
 
-When SQLAlchemy cannot get a connection before the pool timeout, the API returns HTTP 503 and sends `Retry-After: 1`. This gives the client a clear overload response. It does not increase the pool size or remove the underlying bottleneck.
+The application returns HTTP 503 with `Retry-After: 1` when SQLAlchemy cannot obtain a pool connection before the timeout. A 503 is a failed/overload response, not a successful request.
 
-## SQLite load results
+## API-level load tests
 
-These are the recorded SQLite results:
+The API-level tests used Locust. The normal workload is in `locustfile.py`:
+
+- users wait randomly between 1 and 3 seconds between tasks;
+- tasks cover list, lookup, and keyset-pagination requests for all main resources;
+- each list request uses `limit=20`.
+
+The pagination workload is in `locustfile_pagination.py`:
+
+- users wait randomly between 0.5 and 1.5 seconds;
+- it compares `skip=490000` with keyset requests using random `after_id` values between 400,000 and 499,000;
+- page size is 20.
+
+The historical records do not contain the exact Locust spawn rate and duration for every run. The tables below therefore preserve the measurements, but runs with different conditions should not be compared as a controlled experiment.
+
+### SQLite results
 
 | Users | Requests | Throughput | Average | p95 | Failures |
 |---:|---:|---:|---:|---:|---:|
@@ -36,11 +43,9 @@ These are the recorded SQLite results:
 | 50 | 2,336 | 25.6 RPS | 13.43 ms | 27 ms | 0 |
 | 100 | 7,865 | 50.0 RPS | 15.97 ms | 38 ms | 0 |
 
-The test lengths were not exactly the same, so these numbers are useful for a general comparison, but they are not a perfectly controlled experiment.
+The database backend was SQLite. The test lengths were not exactly the same.
 
-## PostgreSQL load results
-
-These are the recorded PostgreSQL results:
+### PostgreSQL results
 
 | Users | Requests | Throughput | Average | p95 | Failures |
 |---:|---:|---:|---:|---:|---:|
@@ -49,21 +54,21 @@ These are the recorded PostgreSQL results:
 | 50 | 2,873 | 24.8 RPS | 16.94 ms | 38 ms | 0 |
 | 100 | 5,525 | 50.9 RPS | 18.32 ms | 42 ms | 0 |
 
-There is no recorded 150-user SQLite or PostgreSQL result.
+The database backend was PostgreSQL. There is no recorded 150-user SQLite or PostgreSQL result.
 
-A later 100-user PostgreSQL run recorded about 61 RPS, 380–400 ms average latency, about 1,000 ms p95 latency, and 0% failures. The exact test conditions were not recorded in the same format as the table above, so I do not compare the two 100-user results directly.
+A later 100-user PostgreSQL run recorded about 61 RPS, 380–400 ms average latency, about 1,000 ms p95 latency, and 0% failures. Its exact Locust duration and spawn rate were not recorded in the project, so it is not directly comparable with the table above.
 
-A later 200-user PostgreSQL run recorded:
+A later successful 200-user PostgreSQL run recorded:
 
 | Users | Requests | Throughput | Average | Median | p95 | p99 | Failures |
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 200 | 16,717 | 94.4 RPS | 96.57 ms | 33 ms | 530 ms | 860 ms | 0 |
 
-This was one successful run. It does not prove that the API can always handle 200 users without errors. Other 200-user runs filled the connection pool and returned failures.
+This means that run had no recorded failed requests. It does not prove that the API always handles 200 users without errors. Other 200-user runs filled the 30-connection pool and returned failures, including HTTP 503 responses after overload handling was added.
 
-## Connection pool results at 200 users
+### Recorded 200-user pool comparison
 
-One recorded comparison looked like this:
+One recorded comparison was:
 
 | Metric | Before | After |
 |---|---:|---:|
@@ -74,22 +79,31 @@ One recorded comparison looked like this:
 | p95 latency | 91,000 ms | 790 ms |
 | Pool capacity | 15 | 30 |
 
-The second run still had 39 failed requests. So the API should not be described as error-free at 200 concurrent users.
+The `After` run still had 39 failed requests. It should not be presented as an error-free 200-user result.
 
-The main problem seen at high load was connection-pool exhaustion. Synchronous requests also compete for the AnyIO threadpool. When the system is busy, a request can wait for a thread and then wait again for a database connection.
+The main bottleneck seen at high load was connection-pool exhaustion, with synchronous request work also competing for the AnyIO thread limiter. Requests could wait for a thread and then wait for a database connection.
 
-## Offset and keyset pagination
+## Database-only pagination benchmarks
 
-The focused Locust test used 25 users. It made 661 requests and had no failures.
+These tests do not send HTTP requests. They measure database queries through the SQLAlchemy engine configured in `app.database`.
 
-| Request type | Average | p95 |
-|---|---:|---:|
-| Courses – deep offset | 107.42 ms | 190 ms |
-| Courses – keyset | 15.51 ms | 42 ms |
-| Exams – deep offset | 107.52 ms | 220 ms |
-| Exams – keyset | 17.27 ms | 84 ms |
+### `scripts/benchmark_report.py`
 
-I also ran a database-only test with 30 runs per query. Each query returned 20 records from around the 490,000th position.
+The script can be run with:
+
+```powershell
+python scripts/benchmark_report.py
+```
+
+Its verified settings are:
+
+- 30 timed runs per query;
+- one warm-up query per case;
+- page size 20;
+- offset and `after_id` value 490,000;
+- courses and exams only.
+
+Recorded results:
 
 | Query | Average | Median |
 |---|---:|---:|
@@ -98,24 +112,45 @@ I also ran a database-only test with 30 runs per query. Each query returned 20 r
 | Exams – offset | 72.099 ms | 67.082 ms |
 | Exams – keyset | 0.364 ms | 0.289 ms |
 
-Keyset pagination was much faster for deep pages. The database-only results show why: offset queries must pass over many earlier rows, while keyset queries can start from the `id` value.
+### `scripts/benchmark_pagination.py`
 
-Offset pagination is still available for compatibility, but clients should use `after_id` when moving through large tables.
+The script can be run with:
 
-## What I learned
+```powershell
+python scripts/benchmark_pagination.py
+```
 
-The API worked well at the lower recorded loads. The 50- and 100-user PostgreSQL tables show no failures in those runs.
+Its verified settings are:
 
-At higher loads, the main limit was not just the SQL query speed. The SQLAlchemy pool and the synchronous threadpool could both become full. This led to long waits and failed requests.
+- 10 timed runs per query;
+- one warm-up query per case;
+- page size 20;
+- departments, lecturers, courses, and exams;
+- offsets of 0, up to 1,000, up to 10,000, up to 50,000, and the final page where available.
 
-The HTTP 503 response makes pool overload easier for clients to recognize than an HTTP 500. It is still a failure response and should be counted as such in load tests.
+This script prints mean timings for each table and offset. Its output is separate from the recorded Locust results above.
 
-## Limitations
+## Offset versus keyset pagination
 
-- A run with zero failures only describes that run. It does not show the maximum capacity of the API.
-- The historical tests did not all use the same duration and exact Locust settings.
-- The 200-user successful run and the 200-user failure runs show that results can change between runs under heavy load.
-- Diagnostic Uvicorn logs help explain pool and threadpool behavior, but they are not a replacement for a Locust summary.
-- I am not adding new benchmark numbers until Locust is run again with controlled and recorded settings.
+The focused Locust comparison used 25 users. The project records 661 requests and no failures for this test. The exact spawn rate and duration were not recorded.
 
-**Tools:** FastAPI, PostgreSQL, SQLAlchemy, Locust, Python.
+| Request type | Average | p95 |
+|---|---:|---:|
+| Courses – deep offset | 107.42 ms | 190 ms |
+| Courses – keyset | 15.51 ms | 42 ms |
+| Exams – deep offset | 107.52 ms | 220 ms |
+| Exams – keyset | 17.27 ms | 84 ms |
+
+The keyset requests were much faster at deep positions. The database-only results show the same pattern because offset queries must pass over earlier rows, while keyset queries can start from the `id` value.
+
+Offset pagination remains available for compatibility. Clients moving through large tables should use `after_id`.
+
+## Conclusions and limitations
+
+- The lower-load PostgreSQL table shows 0 failures at 50 and 100 users in those recorded runs.
+- One 200-user run had 0 failures, but other 200-user runs had failures after the connection pool filled.
+- HTTP 503 responses are counted as failures/overload responses, not successful requests.
+- The measurements were made under different historical conditions, so they are not all directly comparable.
+- The database-only benchmarks do not include HTTP handling, AnyIO scheduling, response serialization, or Locust timing.
+- The Locust scripts define the request mix and user wait times, but the historical spawn rates and durations were not recorded consistently.
+- No result here should be treated as a maximum-capacity claim.
