@@ -20,13 +20,20 @@ def get_department(db: Session, department_id: int):
     return db.get(models.Department, department_id)
 
 
-def get_departments(db: Session, skip: int = 0, limit: int = 20):
-    statement = (
-        select(models.Department)
-        .order_by(models.Department.id)
-        .offset(skip)
-        .limit(limit)
-    )
+def get_departments(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    after_id: int | None = None,
+):
+    statement = select(models.Department).order_by(models.Department.id)
+
+    if after_id is not None:
+        statement = statement.where(models.Department.id > after_id)
+    else:
+        statement = statement.offset(skip)
+
+    statement = statement.limit(limit)
     return db.scalars(statement).all()
 
 
@@ -69,13 +76,20 @@ def get_lecturer(db: Session, lecturer_id: int):
     return db.get(models.Lecturer, lecturer_id)
 
 
-def get_lecturers(db: Session, skip: int = 0, limit: int = 20):
-    statement = (
-        select(models.Lecturer)
-        .order_by(models.Lecturer.id)
-        .offset(skip)
-        .limit(limit)
-    )
+def get_lecturers(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    after_id: int | None = None,
+):
+    statement = select(models.Lecturer).order_by(models.Lecturer.id)
+
+    if after_id is not None:
+        statement = statement.where(models.Lecturer.id > after_id)
+    else:
+        statement = statement.offset(skip)
+
+    statement = statement.limit(limit)
     return db.scalars(statement).all()
 
 

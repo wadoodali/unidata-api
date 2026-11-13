@@ -138,8 +138,6 @@ def generate_data(batch_size: int = 1000):
         print(f"Courses:    {count_records(db, models.Course):,}")
 
         # 4. Exams: each exam references an existing course.
-        exam_count = count_records(db, models.Exam)
-
         course_ids = db.scalars(
             select(models.Course.id).order_by(models.Course.id)
         ).all()

@@ -18,6 +18,10 @@ unidata.db
 *.sqlite
 *.sqlite3
 
+# Runtime and diagnostic logs
+*.log
+pool_analysis_logs.txt
+
 # Test caches
 .pytest_cache/
 .coverage

@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -591,3 +592,94 @@ def test_delete_exam(client):
     assert client.get(
         f"/api/exams/{exam['id']}"
     ).status_code == 404
+
+
+def test_keyset_pagination_for_all_list_endpoints(client):
+    department_one = create_department(client, name="Department One")
+    department_two = create_department(client, name="Department Two")
+    lecturer_one = create_lecturer(
+        client,
+        department_one["id"],
+        email="one@example.com",
+    )
+    lecturer_two = create_lecturer(
+        client,
+        department_one["id"],
+        name="Second Lecturer",
+        email="two@example.com",
+    )
+    course_one = create_course(
+        client,
+        department_one["id"],
+        lecturer_one["id"],
+        code="CS201",
+    )
+    course_two = create_course(
+        client,
+        department_two["id"],
+        lecturer_two["id"],
+        code="CS202",
+    )
+    exam_one = create_exam(client, course_one["id"])
+    exam_two = create_exam(client, course_two["id"])
+
+    cases = [
+        ("departments", department_one["id"], department_two["id"]),
+        ("lecturers", lecturer_one["id"], lecturer_two["id"]),
+        ("courses", course_one["id"], course_two["id"]),
+        ("exams", exam_one["id"], exam_two["id"]),
+    ]
+
+    for resource, first_id, second_id in cases:
+        first_page = client.get(f"/api/{resource}?limit=1")
+        assert first_page.status_code == 200
+        assert len(first_page.json()) == 1
+
+        next_page = client.get(
+            f"/api/{resource}?after_id={first_id}&limit=20"
+        )
+        assert next_page.status_code == 200
+        next_ids = [item["id"] for item in next_page.json()]
+        assert first_id not in next_ids
+        assert second_id in next_ids
+
+        empty_page = client.get(
+            f"/api/{resource}?after_id={second_id}&limit=20"
+        )
+        assert empty_page.status_code == 200
+        assert empty_page.json() == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "/api/departments",
+        "/api/lecturers",
+        "/api/courses",
+        "/api/exams",
+    ],
+)
+@pytest.mark.parametrize("limit", [0, 101])
+def test_list_endpoints_reject_invalid_limits(client, endpoint, limit):
+    response = client.get(f"{endpoint}?limit={limit}")
+
+    assert response.status_code == 422
+
+
+def test_sqlalchemy_timeout_returns_503(client):
+    def timeout_get_db():
+        raise SQLAlchemyTimeoutError("simulated pool timeout")
+
+    original_override = app.dependency_overrides[get_db]
+    app.dependency_overrides[get_db] = timeout_get_db
+
+    try:
+        response = client.get("/api/departments")
+    finally:
+        app.dependency_overrides[get_db] = original_override
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Database temporarily unavailable. Please retry later."
+    }
+    assert response.headers["retry-after"] == "1"
